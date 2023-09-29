@@ -84,7 +84,8 @@ model_quantization_dict = {
     'open_llama_7b': ['bitsandbytes', 'autoGPTQ', 'llamaCpp'],
 }
 
-model_quantization_finetune_dict = {'Llama-2-7b-chat-hf-finetune-omniscien-finetuned-dataset' : ["finetune"]
+model_quantization_finetune_dict = {'naive_merge_ver2' : {"model_type":"full-model"},
+    'Llama-2-7b-chat-hf-finetune-omniscien-finetuned-dataset' : {"model_type":"adapter"},
 }
 
 model_metadata = {
@@ -97,9 +98,12 @@ model_metadata = {
     "open_llama_7b"     : {"max_token" : 32, 
                         "task" : "text-generation",
                         "temperature" : 0},
-    "Llama-2-7b-chat-hf-finetune-omniscien-finetuned-dataset" : {"max_token" : 2048,
+    "Llama-2-7b-chat-hf-finetune-omniscien-finetuned-dataset" : {"max_token" : 256,
                                                                 "task" : "text-generation",
-                                                                "temperature" : 0}
+                                                                "temperature" : 0},
+    "naive_merge_ver2" : {"max_token" : 256,
+                    "task" : "text-generation",
+                    "temperature" : 0}
 }
 
 custom_prompt_template = """ Use the following pieces of information to answer the user's question.
@@ -241,32 +245,56 @@ def load_llama2_llamaCpp(model_option, model_metadata):
 
 @st.cache_resource
 def load_llama2_finetune(model_option, model_metadata):
-    model_name_or_path = "Llama-2-7b-chat-hf"
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    # Load the model (use bf16 for faster inference)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path,
-        #torch_dtype=torch.float16,
-        device_map="auto",
-        #load_in_4bit=True,
-        quantization_config=BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            #bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type='nf4',
-        )
-    )
-    model = PeftModel.from_pretrained(model, model_option)
-    pipe = pipeline(
-            "text-generation", 
-            model = model, 
-            tokenizer = tokenizer,
-            max_new_tokens = 2048, 
-            #max_length = 256,
-            model_kwargs ={"temperature": 0, "repetition_penalty" : 1.3}
+    if model_quantization_finetune_dict[model_option]["model_type"] == "adapter" :
+        model_name_or_path = "Llama-2-7b-chat-hf"
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        # Load the model (use bf16 for faster inference)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            #torch_dtype=torch.float16,
+            device_map="auto",
+            #load_in_4bit=True,
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                #bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type='nf4',
             )
-    llm = HuggingFacePipeline(pipeline=pipe)
-    return llm
+        )
+        model = PeftModel.from_pretrained(model, model_option)
+        pipe = pipeline(
+                "text-generation", 
+                model = model, 
+                tokenizer = tokenizer,
+                max_new_tokens = 2048, 
+                #max_length = 256,
+                model_kwargs ={"temperature": 0, "repetition_penalty" : 1.3}
+                )
+        llm = HuggingFacePipeline(pipeline=pipe)
+        return llm
+
+    elif model_quantization_finetune_dict[model_option]["model_type"] == "full-model" :
+        tokenizer = AutoTokenizer.from_pretrained(model_option)
+        # Load the model (use bf16 for faster inference)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_option,
+            device_map="auto",
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type='nf4',
+            )
+        )
+        pipe = pipeline(
+                "text-generation", 
+                model = model, 
+                tokenizer = tokenizer,
+                max_new_tokens = 2048, 
+                #max_length = 256,
+                model_kwargs ={"temperature": 0, "repetition_penalty" : 1.3}
+                )
+        llm = HuggingFacePipeline(pipeline=pipe)
+        return llm
 
 
 def convert_to_website_format(urls):
@@ -383,6 +411,8 @@ def main():
 
     # model_option = "fastchat-t5-3b-v1.0"
     # quantize_option = "No quantization"
+    # model_option = "fastchat-t5-3b-v1.0"
+    # quantize_option = "No quantization"
     model_type = st.selectbox("Document option",("Base-model", "Finetuned"))
     if model_type == "Base-model" :
         model_option = "fastchat-t5-3b-v1.0"
@@ -407,7 +437,7 @@ def main():
                 st.write("model_option: ", model_option, "quantize_option: ", quantize_option) 
 
     elif model_type == "Finetuned":
-        model_option = "Llama-2-7b-chat-hf-finetune-omniscien-finetuned-dataset"
+        model_option = "naive_merge_ver2"
         quantize_option = "finetune"
         with st.form(key = 'finetuned'):
             col1, col2 = st.columns([3,1])
@@ -515,3 +545,4 @@ def main():
 
 if __name__ == '__main__':
         main()
+
